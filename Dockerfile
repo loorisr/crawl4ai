@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.13-slim
 
 # Set build arguments
 ARG APP_HOME=/app
@@ -26,20 +26,37 @@ LABEL maintainer="unclecode"
 LABEL description="🔥🕷️ Crawl4AI: Open-source LLM Friendly Web Crawler & scraper"
 LABEL version="1.0"    
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    curl \
-    wget \
-    gnupg \
-    git \
-    cmake \
-    pkg-config \
-    python3-dev \
-    libjpeg-dev \
-    redis-server \
-    supervisor \
-    && rm -rf /var/lib/apt/lists/*
 
+WORKDIR ${APP_HOME}
+
+RUN echo '#!/bin/bash\n\
+if [ "$USE_LOCAL" = "true" ]; then\n\
+    echo "📦 Installing from local source..."\n\
+    pip install --no-cache-dir /tmp/project/\n\
+else\n\
+    echo "🌐 Installing from GitHub..."\n\
+    for i in {1..3}; do \n\
+        git clone --branch ${GITHUB_BRANCH} ${GITHUB_REPO} /tmp/crawl4ai && break || \n\
+        { echo "Attempt $i/3 failed! Taking a short break... ☕"; sleep 5; }; \n\
+    done\n\
+    pip install --no-cache-dir /tmp/crawl4ai\n\
+fi' > /tmp/install.sh && chmod +x /tmp/install.sh
+
+COPY . /tmp/project/
+
+COPY deploy/docker/supervisord.conf .
+
+COPY deploy/docker/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+    
+RUN pip install --no-cache-dir --upgrade pip && \
+    /tmp/install.sh && \
+    python -c "import crawl4ai; print('✅ crawl4ai is ready to rock!')" && \
+    python -c "from playwright.sync_api import sync_playwright; print('✅ Playwright is feeling dramatic!')"
+    
+
+
+# Install Playwright dependencies. Uses less space than playwright install --with-deps chromium
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     libnss3 \
@@ -63,81 +80,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2 \
     libatspi2.0-0 \
     && rm -rf /var/lib/apt/lists/*
-
-RUN if [ "$ENABLE_GPU" = "true" ] && [ "$TARGETARCH" = "amd64" ] ; then \
-    apt-get update && apt-get install -y --no-install-recommends \
-    nvidia-cuda-toolkit \
-    && rm -rf /var/lib/apt/lists/* ; \
-else \
-    echo "Skipping NVIDIA CUDA Toolkit installation (unsupported platform or GPU disabled)"; \
-fi
-
-RUN if [ "$TARGETARCH" = "arm64" ]; then \
-    echo "🦾 Installing ARM-specific optimizations"; \
-    apt-get update && apt-get install -y --no-install-recommends \
-    libopenblas-dev \
-    && rm -rf /var/lib/apt/lists/*; \
-elif [ "$TARGETARCH" = "amd64" ]; then \
-    echo "🖥️ Installing AMD64-specific optimizations"; \
-    apt-get update && apt-get install -y --no-install-recommends \
-    libomp-dev \
-    && rm -rf /var/lib/apt/lists/*; \
-else \
-    echo "Skipping platform-specific optimizations (unsupported platform)"; \
-fi
-
-WORKDIR ${APP_HOME}
-
-RUN echo '#!/bin/bash\n\
-if [ "$USE_LOCAL" = "true" ]; then\n\
-    echo "📦 Installing from local source..."\n\
-    pip install --no-cache-dir /tmp/project/\n\
-else\n\
-    echo "🌐 Installing from GitHub..."\n\
-    for i in {1..3}; do \n\
-        git clone --branch ${GITHUB_BRANCH} ${GITHUB_REPO} /tmp/crawl4ai && break || \n\
-        { echo "Attempt $i/3 failed! Taking a short break... ☕"; sleep 5; }; \n\
-    done\n\
-    pip install --no-cache-dir /tmp/crawl4ai\n\
-fi' > /tmp/install.sh && chmod +x /tmp/install.sh
-
-COPY . /tmp/project/
-
-COPY deploy/docker/supervisord.conf .
-
-COPY deploy/docker/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-RUN if [ "$INSTALL_TYPE" = "all" ] ; then \
-        pip install --no-cache-dir \
-            torch \
-            torchvision \
-            torchaudio \
-            scikit-learn \
-            nltk \
-            transformers \
-            tokenizers && \
-        python -m nltk.downloader punkt stopwords ; \
-    fi
-
-RUN if [ "$INSTALL_TYPE" = "all" ] ; then \
-        pip install "/tmp/project/[all]" && \
-        python -m crawl4ai.model_loader ; \
-    elif [ "$INSTALL_TYPE" = "torch" ] ; then \
-        pip install "/tmp/project/[torch]" ; \
-    elif [ "$INSTALL_TYPE" = "transformer" ] ; then \
-        pip install "/tmp/project/[transformer]" && \
-        python -m crawl4ai.model_loader ; \
-    else \
-        pip install "/tmp/project" ; \
-    fi
     
-RUN pip install --no-cache-dir --upgrade pip && \
-    /tmp/install.sh && \
-    python -c "import crawl4ai; print('✅ crawl4ai is ready to rock!')" && \
-    python -c "from playwright.sync_api import sync_playwright; print('✅ Playwright is feeling dramatic!')"
-    
-RUN playwright install --with-deps chromium
+# Install Playwright and chromium
+RUN playwright install chromium 
 
 COPY deploy/docker/* ${APP_HOME}/
 
